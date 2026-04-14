@@ -11,7 +11,7 @@
   </a>
   <br>
   <img src="https://img.shields.io/badge/Trident-v0.1.0-blue?style=for-the-badge&logo=windows" alt="v0.1.0">
-  <img src="https://img.shields.io/github/commit-activity/t/zzzzhub/Trident?style=for-the-badge&logo=github&color=teal" alt="Commit activity">
+  <img src="https://img.shields.io/github/commit-activity/zzzzhub/Trident?style=for-the-badge&logo=github&color=teal" alt="Commit activity">
 </p>
 
 <h1 align="center">Trident</h1>
