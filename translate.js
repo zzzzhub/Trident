@@ -1,7 +1,5 @@
 const DECORATOR_CLASSES = new Set([ "UICorner", "UIStroke", "UIGradient" ]);
-
 const LAYOUT_CLASSES = new Set([ "UIListLayout", "UIGridLayout", "UIPageLayout", "UITableLayout", "UIPadding", "UIAspectRatioConstraint", "UISizeConstraint", "UITextSizeConstraint" ]);
-
 const ROOT_GUI_CLASSES = new Set([ "ScreenGui", "BillboardGui", "SurfaceGui", "LayerCollector", "GuiMain" ]);
 
 let liveModel = {
@@ -11,85 +9,43 @@ let liveModel = {
 };
 
 const SAMPLE = `local gui = Instance.new("ScreenGui")\ngui.Name = "Gui"\ngui.IgnoreGuiInset = true\n\nlocal frame = Instance.new("Frame")\nframe.Name = "Frame"\nframe.Size = UDim2.fromScale(0.45, 0.45)\nframe.Position = UDim2.fromScale(0.275, 0.275)\nframe.BackgroundColor3 = Color3.fromRGB(42, 46, 58)\nframe.BorderSizePixel = 0\nframe.Parent = gui\n`;
-
 const input = document.getElementById("input");
-
 const previewSurface = document.getElementById("previewSurface");
-
 const errorBox = document.getElementById("error");
-
 const runBtn = document.getElementById("runBtn");
-
 const loadExampleBtn = document.getElementById("loadExampleBtn");
-
 const downloadBtn = document.getElementById("downloadBtn");
-
 const statusText = document.getElementById("statusText");
-
 const propsEmpty = document.getElementById("propsEmpty");
-
 const propsForm = document.getElementById("propsForm");
-
 const propsClassReadout = document.getElementById("propsClassReadout");
-
 const propsHierarchyReadout = document.getElementById("propsHierarchyReadout");
-
 const propsApply = document.getElementById("propsApply");
-
 const propsDelete = document.getElementById("propsDelete");
-
 const propsLiveApply = document.getElementById("propsLiveApply");
-
 let livePropsDebounce = null;
-
-const TRIDENT_STORAGE_KEY = "trident.editor.v1";
-
+const TRIDENT_STORAGE_KEY = "trident.editor.v1"; /* saves your session thank goodness javascript natively supports keys in there coding language its totally not cursed or anything right..*/
 let persistEditorTimer = null;
-
 let selectedNodeIds = new Set;
-
 let primarySelectedId = null;
-
-const MAX_UNDO = 80;
-
+const MAX_UNDO = 80; /* edit this to whatever iggg */
 const undoStack = [];
-
 const redoStack = [];
-
 let restoringHistory = false;
-
 let dragState = null;
-
-/** TextButton: wait for pointer movement before starting move (so double-click can edit text). */
 let textButtonDragPending = null;
-
 let textButtonEditEl = null;
-
 let textButtonEditKeydownHandler = null;
-
 let liveApplyingFromForm = false;
-
-/** After drag/resize, Size/Position/Anchor in the model are authoritative; don't overwrite from props inputs until user edits layout fields (avoids float/fallback mismatch → "fat" jumps). Holds every node id that was moved/resized in the current gesture (multi-select). */
 let guiLayoutLockedIds = new Set;
-
-/** Live apply: merge Size/Position/Anchor from the form only after the user edits a layout field, or when they click Apply (not on every propsText / color keystroke). */
 let propsFormLayoutFieldsTouched = false;
-
 let propsFormForceFullFormMerge = false;
-
 const PROPS_LAYOUT_FIELD_IDS = new Set([ "propsSizeX", "propsSizeY", "propsPosX", "propsPosY", "propsAx", "propsAy" ]);
-
-/** True while `refreshPropertiesPanel` is writing inputs — ignore spurious input/change that would clear the layout lock. */
 let suppressLayoutUnlockFromPropsRefresh = false;
-
 let propsLayoutPanelSyncRaf = 0;
-
 let pendingPropsLayoutNodeId = null;
-
 const SNAP_GUIDE_PX = 6;
-
 const expandedExplorerIds = new Set;
-
 const CHROME_Z = "2147483000";
 
 function elementBoxInSurface(el) {
@@ -373,10 +329,10 @@ function normalizeSource(src) {
     return kept.join("\n");
 }
 
-/** Parsed from raw source before comments are stripped; keeps Input-drag export across Refresh. */
+/** skibidi */
 function extractTridentInputDragPragmas(source) {
     const out = new Map;
-    const re = /^\s*--\s*TRIDENT:InputDrag:([A-Za-z_]\w*)\s*$/gm;
+    const re = /^\s*--\s*trident:InputDrag:([A-Za-z_]\w*)\s*$/gm;
     let m;
     while ((m = re.exec(String(source || ""))) !== null) {
         out.set(m[1], true);
@@ -649,7 +605,7 @@ function normalizeGuiZIndex(props) {
     return 1;
 }
 
-/** ScreenGui uses DisplayOrder, not ZIndex (ZIndex is invalid on ScreenGui in Roblox). */
+/** updated this to avoid using zindex on screengui since luau syntax doesnt work like that! */
 function migrateScreenGuiNodeProps(props) {
     if (!props || typeof props !== "object") return;
     const dp = props.DisplayOrder;
@@ -1121,11 +1077,6 @@ function udim2AxisPixels(scale, offset, parentSize) {
     return (scale || 0) * parentSize + (offset || 0);
 }
 
-/**
- * Inner width/height of the immediate parent for UDim2 scale→px.
- * During a synchronous DOM build (e.g. after corner radius / full `renderFromLiveModel`), `clientWidth` on a Frame can still be 0.
- * Falling back to the full `previewSurface` size makes `scale * parent` use the wrong basis — children look ~2–3× too large.
- */
 function getParentUdimBasisPx(parentEl) {
     const ps = previewSurface;
     const fbW = () => Math.max(1, ps?.clientWidth || 800);
@@ -1241,7 +1192,7 @@ function uniqueVarName(className, nodes, reservedExtra = null) {
     return name;
 }
 
-/** Returns a valid unused Lua identifier from user input, or null if unusable. */
+/** main method for parsing */
 function coerceLuaVarName(input, nodes, reservedExtra) {
     let t = String(input || "").trim().replace(/[^A-Za-z0-9_]/g, "");
     if (t && /^[0-9]/.test(t)) t = `_${t}`;
@@ -1271,7 +1222,7 @@ function deepCloneNodeSnapshot(n) {
     };
 }
 
-/** Build a serializable clipboard payload from top-level selected subtrees. */
+/** serializable clipboard */
 function buildClipboardFromSelection() {
     const tops = getTopLevelSelectionIds();
     if (tops.length === 0) return null;
@@ -1299,7 +1250,7 @@ function buildClipboardFromSelection() {
 
 let tridentClipboard = null;
 
-/** Instantiate clipboard payload into liveModel. `opts.renameFirstRoot` must be an unused identifier if set. */
+/**  skibidi brainrot tung tung tung sahurrrr sahereeeee brrr brrr tung tung brr brr patapim!! */
 function pasteTridentPayload(clipboard, opts = {}) {
     if (!clipboard?.roots?.length || !clipboard.nodes || !liveModel?.nodes) return false;
     const { renameFirstRoot: renameFirstRoot = null } = opts;
@@ -1450,7 +1401,7 @@ function insertAllowed(parentClass, childClass) {
     return false;
 }
 
-/** Walk from drop target up until we find a valid Parent for childClass (e.g. drop on TextLabel → parent Frame). Skips the dragged node so you never “parent to self”. */
+/** find valid target when dragging */
 function findValidReparentParent(childId, childClass, dropTargetId, nodes) {
     let pid = dropTargetId;
     for (let hop = 0; hop < 64; hop++) {
@@ -1497,7 +1448,7 @@ function reparentInstanceTo(childId, dropTargetId) {
     return true;
 }
 
-/** Reparent selection (or single dragged id) under drop target — e.g. onto ScreenGui, Frame, or a leaf (uses nearest valid ancestor). */
+/** reparenting depending on where dragging elements are */
 function reparentExplorerDrop(dropTargetId, primaryDragId) {
     if (!liveModel?.nodes?.has(dropTargetId) || !primaryDragId || !liveModel.nodes.has(primaryDragId)) return 0;
     const multi = selectedNodeIds.has(primaryDragId) && selectedNodeIds.size > 1;
@@ -1561,7 +1512,7 @@ function findInsertParentId(model) {
     return insertParent;
 }
 
-/** Parent to attach pasted/duplicated roots under (sibling of selection when possible). */
+/** clipboard changes */
 function findPasteParentForClipboard(model) {
     const primary = getPrimarySelectedId();
     if (!primary || !model.nodes.has(primary)) {
@@ -1817,7 +1768,7 @@ function usesLayoutPropsPanel(className) {
     return true;
 }
 
-/** GuiObjects that can use exported UserInputService drag script. */
+/** draggable types!!1!1!! */
 function supportsDraggableProp(className) {
     return [ "Frame", "ScrollingFrame", "CanvasGroup", "TextLabel", "TextButton", "TextBox", "ImageLabel", "ImageButton" ].includes(className);
 }
@@ -2363,7 +2314,6 @@ function numInputString(v, fallback = "0") {
     return String(t);
 }
 
-/** Keep Position / Size / Anchor fields in the properties panel aligned with the model while dragging (one update per frame max). */
 function schedulePropsLayoutInputsSyncDuringDrag(nodeId) {
     if (!nodeId || !liveModel?.nodes?.has(nodeId)) return;
     pendingPropsLayoutNodeId = nodeId;
@@ -2499,7 +2449,6 @@ function applyPropsFromForm() {
             }
             p.Name = document.getElementById("propsName").value || n.className;
             const layoutLockedToPreview = guiLayoutLockedIds.has(tid);
-            /** One props panel drives all targets; only the primary selection's layout fields match that row. Applying shared layout to every target would stomp non-primary sizes/positions (felt like random jumps). */
             const layoutFromSharedForm = targets.length === 1 || tid === primaryFormId;
             if (!layoutLockedToPreview && layoutFromSharedForm && mergeLayoutFromForm) {
                 p.Size = {
@@ -2975,7 +2924,6 @@ function repositionSelectionChrome(el) {
     addResizeHandles(el);
 }
 
-/** Move corner handles to match `el` without removing nodes (keeps active pointer capture during resize). */
 function positionResizeHandlesAround(el) {
     if (!previewSurface || !el) return;
     if (el.dataset.className === "ScreenGui") return;
@@ -3544,8 +3492,6 @@ document.getElementById("parentMountBar")?.addEventListener("click", e => {
     schedulePersistEditorState();
 });
 
-/** Do not auto-parse the source on every keystroke. Debounced `render()` was re-parsing `input.value` and replacing `liveModel`, which fought `syncSourceFromModel()` (preview edits, resize, props) and could drop `Size` / revert to defaults — labels “jumping” huge. Use the Refresh control to parse Luau from the editor. */
-
 const toolboxEl = document.getElementById("toolbox");
 
 if (toolboxEl) {
@@ -3616,7 +3562,6 @@ function shouldBlockDeleteSelectionShortcut() {
     return false;
 }
 
-/** Let Source / property text fields use native ⌘C / ⌘V for text. */
 function shouldUseNativeClipboardInTarget() {
     const a = document.activeElement;
     if (!a) return false;
@@ -3683,7 +3628,6 @@ try {
     if (input && !input.value.trim()) setEditorSourceValue(SAMPLE);
 }
 
-/* ── Column resizers ─────────────────────────────────────────── */
 (function initColumnResizers() {
     const split = document.getElementById("mainSplit");
     if (!split) return;
@@ -3737,7 +3681,6 @@ try {
     });
 })();
 
-/* ── Preview size label ──────────────────────────────────────── */
 (function initPreviewSizeLabel() {
     const surf = document.getElementById("previewSurface");
     const lbl = document.getElementById("previewSizeLabel");
