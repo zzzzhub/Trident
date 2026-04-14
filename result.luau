@@ -1,0 +1,2 @@
+-- Optional: paste Luau here and copy into the Trident web editor, or use
+-- **Download .luau** in the app to export the preview (including edits) to `trident-ui.luau`.

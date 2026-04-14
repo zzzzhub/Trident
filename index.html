@@ -1,0 +1,1368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Trident</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* Flat, editor-style chrome (avoid glossy “AI” gradients on controls). */
+    :root {
+      --bg: #1e1e1e;
+      --surface: #252526;
+      --surface-elev: #2d2d30;
+      --border: #3c3c3c;
+      --border-focus: #007fd4;
+      --text: #cccccc;
+      --muted: #858585;
+      --accent: #3794ff;
+      --accent-muted: #264f78;
+      --btn-primary: #0e639c;
+      --btn-primary-hover: #1177bb;
+      --success: #89d185;
+      --error: #f48771;
+      --toolbar-h: 48px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
+      display: grid;
+      grid-template-rows: var(--toolbar-h) 1fr auto;
+    }
+
+    @media (max-width: 720px) {
+      body {
+        grid-template-rows: var(--toolbar-h) minmax(0, 1fr) auto auto;
+      }
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 5px;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .brand-mark img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: var(--text);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    label.auto {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--text);
+      padding: 5px 12px;
+      border-radius: 2px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+
+    .btn:hover {
+      background: #383838;
+      border-color: #505050;
+    }
+
+    .btn:focus-visible {
+      outline: 1px solid var(--border-focus);
+      outline-offset: 1px;
+    }
+
+    .btn--primary {
+      background: var(--btn-primary);
+      border-color: #1177bb;
+      color: #fff;
+    }
+
+    .btn--primary:hover {
+      background: var(--btn-primary-hover);
+      border-color: #1c8fd4;
+    }
+
+    .btn--ghost {
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .btn--ghost:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: var(--border);
+    }
+
+    .split {
+      display: flex;
+      min-height: 0;
+    }
+
+    .split > .explorer-col { width: 220px; min-width: 140px; flex-shrink: 0; }
+    .split > .source-pane   { flex: 0.9; min-width: 120px; }
+    .split > .preview-pane  { flex: 1.4; min-width: 200px; }
+    .split > .props-col     { width: 260px; min-width: 180px; flex-shrink: 0; }
+
+    .col-resizer {
+      width: 5px;
+      min-width: 5px;
+      max-width: 5px;
+      cursor: col-resize;
+      background: var(--border);
+      position: relative;
+      z-index: 50;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .col-resizer:hover,
+    .col-resizer.active {
+      background: var(--accent);
+    }
+
+    @media (max-width: 1100px) {
+      .split > .explorer-col,
+      .split > .props-col,
+      .split > .col-resizer.res-explorer,
+      .split > .col-resizer.res-props { display: none; }
+      .split > .source-pane { flex: 1; }
+      .split > .preview-pane { flex: 1; }
+    }
+
+    @media (max-width: 720px) {
+      .split {
+        flex-direction: column;
+        min-height: calc(100vh - var(--toolbar-h) - 52px);
+      }
+      .topbar {
+        flex-wrap: wrap;
+        padding: 8px 10px;
+        gap: 8px;
+      }
+      .topbar-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .split.main-grid > * {
+        display: none !important;
+      }
+      .split.main-grid > .col-resizer {
+        display: none !important;
+      }
+      .split.main-grid[data-mobile-pane="insert"] #explorerColumn {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .split.main-grid[data-mobile-pane="source"] .source-pane {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .split.main-grid[data-mobile-pane="preview"] .preview-pane {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .split.main-grid[data-mobile-pane="props"] #propsColumn {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .props-panel-inner {
+        max-height: none;
+      }
+      #input {
+        min-height: min(55vh, 420px);
+      }
+      #previewSurface {
+        min-height: min(50vh, 480px);
+      }
+    }
+
+    .mobile-tab-bar {
+      display: none;
+      position: sticky;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 200;
+      gap: 0;
+      padding: 0;
+      margin: 0;
+      border-top: 1px solid var(--border);
+      background: var(--surface-elev);
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+    }
+
+    @media (max-width: 720px) {
+      .mobile-tab-bar {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .mobile-tab-btn {
+      margin: 0;
+      padding: 12px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: inherit;
+      border: none;
+      border-right: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--muted);
+      cursor: pointer;
+      min-height: 48px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .mobile-tab-btn:last-child {
+      border-right: 0;
+    }
+
+    .mobile-tab-btn[aria-current="true"] {
+      color: var(--text);
+      background: rgba(0, 127, 212, 0.15);
+      box-shadow: inset 0 -2px 0 var(--border-focus);
+    }
+
+    @media (pointer: coarse) {
+      .toolbox-chip {
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+    }
+
+    .explorer-col {
+      border-right: none;
+      background: var(--surface);
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .explorer-col > .explorer-tree-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .explorer-head,
+    .toolbox-head {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .explorer-tree-wrap {
+      overflow: auto;
+      min-height: 120px;
+      padding: 6px 2px;
+    }
+
+    .explorer-tree {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      user-select: none;
+    }
+
+    .explorer-row {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 4px 3px;
+      margin: 1px 0;
+      border-radius: 4px;
+      cursor: grab;
+      color: var(--text);
+      border: 1px solid transparent;
+    }
+
+    .explorer-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .explorer-row:active {
+      cursor: grabbing;
+    }
+
+    .explorer-row--selected {
+      background: rgba(0, 127, 212, 0.18);
+      border-color: var(--accent-muted);
+    }
+
+    .explorer-row--drop {
+      outline: 1px dashed var(--border-focus);
+      outline-offset: -1px;
+    }
+
+    .explorer-row-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+    }
+
+    .explorer-clone-btn {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      font-size: 12px;
+      line-height: 1;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--muted);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .explorer-clone-btn:hover {
+      color: var(--text);
+      border-color: #505050;
+    }
+
+    .explorer-toggle {
+      width: 14px;
+      height: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .explorer-toggle--leaf {
+      visibility: hidden;
+    }
+
+    .explorer-class {
+      color: #ffffff;
+      flex: 0 1 auto;
+      max-width: 55%;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .explorer-name {
+      color: var(--muted);
+      font-size: 10px;
+      flex: 1 1 0;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toolbox {
+      padding: 8px 10px 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 280px;
+      overflow: auto;
+    }
+
+    .toolbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .toolbox-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .toolbox-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .toolbox-chip {
+      padding: 3px 8px;
+      font-size: 11px;
+      font-family: "JetBrains Mono", monospace;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--text);
+      cursor: grab;
+      white-space: nowrap;
+    }
+
+    .toolbox-chip:hover {
+      border-color: #505050;
+      background: #383838;
+    }
+
+    .toolbox-chip:active {
+      cursor: grabbing;
+    }
+
+    .props-draggable-export {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 0 4px;
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+    }
+
+    .props-draggable-export .props-draggable-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .props-draggable-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .source-pane textarea#input {
+      min-height: 0;
+      height: 100%;
+    }
+
+    .pane {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .pane > *:nth-child(2) {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .pane:last-child {
+      border-right: 0;
+      background: var(--surface);
+    }
+
+    .pane-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .pane-head h2 {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .props-col {
+      border-right: 0;
+      border-left: none;
+      background: var(--surface);
+    }
+
+    .props-panel-inner {
+      padding: 12px 14px;
+      overflow: auto;
+      max-height: calc(100vh - 120px);
+    }
+
+    .props-panel-inner h3 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .prop-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+      align-items: center;
+    }
+
+    .prop-grid label {
+      font-size: 11px;
+      color: var(--muted);
+      grid-column: span 2;
+      margin-top: 4px;
+    }
+
+    .prop-grid label.inline {
+      grid-column: span 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 0;
+    }
+
+    /* Checkbox → compact toggle chips (editor-style, matches .btn) */
+    .toggle-chip {
+      position: relative;
+      display: inline-flex;
+      align-items: stretch;
+      cursor: pointer;
+      user-select: none;
+      vertical-align: middle;
+    }
+
+    .toggle-chip input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+
+    .toggle-chip__text {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      padding: 4px 10px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+      font-family: inherit;
+      line-height: 1.2;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+
+    .toggle-chip:hover .toggle-chip__text {
+      background: #383838;
+      border-color: #505050;
+      color: var(--text);
+    }
+
+    .toggle-chip input:checked + .toggle-chip__text {
+      background: rgba(55, 148, 255, 0.12);
+      border-color: var(--accent-muted);
+      color: var(--text);
+      box-shadow: inset 0 0 0 1px rgba(55, 148, 255, 0.15);
+    }
+
+    .toggle-chip input:focus-visible + .toggle-chip__text {
+      outline: 1px solid var(--border-focus);
+      outline-offset: 1px;
+    }
+
+    .props-footer-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .props-footer-actions .toggle-chip--live {
+      margin-left: auto;
+    }
+
+    .color-picker-block {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 2px;
+      margin-bottom: 4px;
+    }
+
+    .color-picker-hue {
+      position: relative;
+      height: 12px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      cursor: crosshair;
+      touch-action: none;
+      background: linear-gradient(
+        to right,
+        #f00 0%,
+        #ff0 16.66%,
+        #0f0 33.33%,
+        #0ff 50%,
+        #00f 66.66%,
+        #f0f 83.33%,
+        #f00 100%
+      );
+    }
+
+    .color-picker-hue-thumb {
+      position: absolute;
+      top: -2px;
+      bottom: -2px;
+      width: 4px;
+      margin-left: -2px;
+      border-radius: 1px;
+      background: #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 0 4px rgba(0, 0, 0, 0.4);
+      pointer-events: none;
+      left: 0;
+    }
+
+    .color-picker-sv {
+      position: relative;
+      height: 112px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      cursor: crosshair;
+      touch-action: none;
+      overflow: hidden;
+    }
+
+    .color-picker-sv-layers {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(to top, #000, transparent),
+        linear-gradient(to right, #fff, rgba(255, 255, 255, 0)),
+        hsl(var(--cp-hue, 210), 100%, 50%);
+    }
+
+    .color-picker-dot {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 1px 4px rgba(0, 0, 0, 0.35);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      left: 50%;
+      top: 50%;
+      box-sizing: border-box;
+    }
+
+    .prop-grid input[type="text"],
+    .prop-grid input[type="number"],
+    .prop-grid select {
+      width: 100%;
+      padding: 5px 8px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      background: #1e1e1e;
+      color: var(--text);
+      font-size: 12px;
+      font-family: "JetBrains Mono", monospace;
+    }
+
+    .prop-grid input.full,
+    .prop-grid select.full {
+      grid-column: span 2;
+    }
+
+    .prop-readout-wrap {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .prop-class {
+      font-size: 13px;
+      font-weight: 600;
+      color: #ffffff;
+      font-family: "JetBrains Mono", monospace;
+      letter-spacing: 0.02em;
+    }
+
+    .prop-hierarchy {
+      margin-top: 4px;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--muted);
+      font-family: "JetBrains Mono", monospace;
+      line-height: 1.35;
+      word-break: break-all;
+    }
+
+    #propsTextBlock,
+    #propsImageRow,
+    #propsLayoutBlock {
+      display: contents;
+    }
+
+    .decor-section {
+      grid-column: 1 / -1;
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+      align-items: center;
+      padding-top: 8px;
+      margin-top: 4px;
+      border-top: 1px solid var(--border);
+    }
+
+    .decor-section.is-visible {
+      display: grid;
+    }
+
+    .decor-section label {
+      grid-column: span 2;
+      margin-top: 0;
+    }
+
+    .decor-section input.full {
+      grid-column: span 2;
+    }
+
+    .trident-snap-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2147482000;
+      overflow: visible;
+    }
+
+    .trident-snap-line-v,
+    .trident-snap-line-h {
+      position: absolute;
+      background: rgba(0, 191, 255, 0.85);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    }
+
+    .trident-snap-line-v {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+
+    .trident-snap-line-h {
+      left: 0;
+      right: 0;
+      height: 1px;
+    }
+
+    .roblox-ui button {
+      user-select: none;
+      appearance: none;
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .roblox-ui button.trident-tb-inline-edit {
+      user-select: text;
+      cursor: text;
+    }
+
+    .pane-head h2 {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    #input {
+      width: 100%;
+      height: 100%;
+      min-height: 360px;
+      resize: none;
+      border: 0;
+      outline: none;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 12px 14px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      tab-size: 2;
+    }
+
+    .pane-foot {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    #error {
+      flex: 1 1 100%;
+      font-size: 11px;
+      color: var(--error);
+      font-family: "JetBrains Mono", monospace;
+      white-space: pre-wrap;
+      min-height: 0;
+    }
+
+    #previewWrap {
+      min-height: 0;
+      padding: 12px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      overflow: auto;
+      background:
+        radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 20px 20px;
+      background-position: 10px 10px;
+    }
+
+    #previewSurface {
+      position: relative;
+      width: 100%;
+      height: 560px;
+      min-width: 280px;
+      min-height: 200px;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: visible;
+      background: #1a1a1d;
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.5),
+        0 4px 24px rgba(0,0,0,0.35);
+      resize: both;
+    }
+
+    #previewSurface::-webkit-resizer {
+      background: transparent;
+    }
+
+    .preview-resize-grip {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 18px;
+      height: 18px;
+      cursor: nwse-resize;
+      z-index: 2147483001;
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0 0 6px 0;
+    }
+
+    .preview-resize-grip::after {
+      content: "";
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid rgba(255,255,255,0.18);
+      border-bottom: 2px solid rgba(255,255,255,0.18);
+    }
+
+    .preview-size-label {
+      position: absolute;
+      bottom: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      font-family: "JetBrains Mono", monospace;
+      color: rgba(255,255,255,0.2);
+      pointer-events: none;
+      z-index: 2147483001;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .roblox-ui {
+      position: absolute;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    .roblox-ui.trident-selected {
+      outline: 1.5px solid var(--border-focus);
+      outline-offset: 0;
+      box-shadow: 0 0 0 1px rgba(0,127,212,0.25);
+    }
+
+    .roblox-ui.trident-image-placeholder {
+      background-image: repeating-linear-gradient(
+        -36deg,
+        rgba(255, 255, 255, 0.05),
+        rgba(255, 255, 255, 0.05) 5px,
+        transparent 5px,
+        transparent 10px
+      );
+    }
+
+    .roblox-ui.trident-image-placeholder[data-image-hint]:not([data-image-hint=""])::after {
+      content: attr(data-image-hint);
+      position: absolute;
+      bottom: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: rgba(255, 255, 255, 0.42);
+      pointer-events: none;
+      max-width: 92%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .trident-root-wrap {
+      position: absolute;
+      left: 0;
+      width: 100%;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+
+    .trident-viewport {
+      pointer-events: auto;
+    }
+
+    .statusbar {
+      padding: 6px 16px 10px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      min-height: 30px;
+    }
+
+    .status-text {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+      max-width: min(100%, 72ch);
+      text-align: left;
+    }
+
+    .status-text:empty {
+      display: none;
+    }
+
+    .statusbar:has(#statusText:empty) {
+      padding: 0;
+      min-height: 0;
+      border-top: none;
+    }
+
+    .preview-tools {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .parent-mount-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 10px;
+      width: 100%;
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .parent-mount-bar > span {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      width: 100%;
+    }
+
+    .parent-mount-btn {
+      flex: 1;
+      min-width: 0;
+      padding: 5px 8px;
+      font-size: 11px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      background: var(--surface-elev);
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 500;
+    }
+
+    .parent-mount-btn:hover {
+      color: var(--text);
+      border-color: #505050;
+    }
+
+    .parent-mount-btn.active {
+      color: var(--text);
+      border-color: var(--border-focus);
+      background: rgba(0, 127, 212, 0.12);
+    }
+
+    .corner-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .corner-field input[type="number"] {
+      width: 52px;
+      padding: 4px 6px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      background: #1e1e1e;
+      color: var(--text);
+      font-size: 12px;
+      font-family: "JetBrains Mono", monospace;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <img src="./trident_logo.png" alt="Trident" />
+      </div>
+      <h1>Trident</h1>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" class="btn btn--ghost" id="loadExampleBtn" title="Replace source with the built-in sample">Sample</button>
+      <button type="button" class="btn" id="saveProjectBtn" title="Download this UI as a .json project file">Save project…</button>
+      <button type="button" class="btn" id="loadProjectBtn" title="Load a previously saved .json project">Load project…</button>
+      <input type="file" id="loadProjectFile" accept=".json,application/json" hidden aria-hidden="true" />
+      <button type="button" class="btn" id="runBtn" title="Re-parse Luau from the source editor into the preview (visual edits stay in sync automatically)">Refresh</button>
+      <button type="button" class="btn btn--primary" id="downloadBtn">Download .luau</button>
+    </div>
+  </header>
+
+  <section class="split main-grid" id="mainSplit" data-mobile-pane="preview">
+    <aside class="explorer-col" id="explorerColumn" style="overflow:hidden;">
+      <div class="explorer-head">Explorer <span style="font-size:10px;color:var(--muted);font-weight:400">⌘C / ⌘V</span></div>
+      <div class="explorer-tree-wrap">
+        <div id="explorerTree" class="explorer-tree" role="tree" aria-label="Instance hierarchy"></div>
+      </div>
+      <div class="toolbox-head">Insert</div>
+      <div class="toolbox" id="toolbox">
+          <div class="toolbox-group">
+          <span class="toolbox-label">Containers</span>
+          <div class="toolbox-chips">
+            <button type="button" class="toolbox-chip" data-insert="ScreenGui" draggable="true">ScreenGui</button>
+            <button type="button" class="toolbox-chip" data-insert="Frame" draggable="true">Frame</button>
+            <button type="button" class="toolbox-chip" data-insert="ScrollingFrame" draggable="true">ScrollingFrame</button>
+          </div>
+        </div>
+        <div class="toolbox-group">
+          <span class="toolbox-label">GuiObjects</span>
+          <div class="toolbox-chips">
+            <button type="button" class="toolbox-chip" data-insert="TextLabel" draggable="true">TextLabel</button>
+            <button type="button" class="toolbox-chip" data-insert="TextButton" draggable="true">TextButton</button>
+            <button type="button" class="toolbox-chip" data-insert="TextBox" draggable="true">TextBox</button>
+            <button type="button" class="toolbox-chip" data-insert="ImageLabel" draggable="true">ImageLabel</button>
+            <button type="button" class="toolbox-chip" data-insert="ImageButton" draggable="true">ImageButton</button>
+          </div>
+        </div>
+        <div class="toolbox-group">
+          <span class="toolbox-label">Effects</span>
+          <div class="toolbox-chips">
+            <button type="button" class="toolbox-chip" data-insert="UICorner" draggable="true">UICorner</button>
+            <button type="button" class="toolbox-chip" data-insert="UIStroke" draggable="true">UIStroke</button>
+            <button type="button" class="toolbox-chip" data-insert="UIGradient" draggable="true">UIGradient</button>
+          </div>
+        </div>
+        <div class="toolbox-group">
+          <span class="toolbox-label">Layout</span>
+          <div class="toolbox-chips">
+            <button type="button" class="toolbox-chip" data-insert="UIListLayout" draggable="true">UIListLayout</button>
+            <button type="button" class="toolbox-chip" data-insert="UIPadding" draggable="true">UIPadding</button>
+          </div>
+        </div>
+        <p style="margin:0;font-size:10px;color:var(--muted);line-height:1.35;">Click to add the element into the explorer!</p>
+      </div>
+    </aside>
+    <div class="col-resizer res-explorer" data-resize-left="explorerColumn"></div>
+
+    <article class="pane source-pane">
+      <div class="pane-head">
+        <h2>Source</h2>
+      </div>
+      <textarea id="input" spellcheck="false" aria-label="Luau source"></textarea>
+      <div class="pane-foot">
+        <div id="error"></div>
+      </div>
+    </article>
+    <div class="col-resizer res-source" data-resize-left-flex="source-pane" data-resize-right-flex="preview-pane"></div>
+
+    <article class="pane preview-pane">
+      <div class="pane-head">
+        <h2>Preview</h2>
+        <div class="parent-mount-bar" id="parentMountBar">
+          <span>ScreenGui parent in exported code</span>
+          <button type="button" class="parent-mount-btn active" data-mount="playerGui" title="game.Players.LocalPlayer.PlayerGui">
+            PlayerGui
+          </button>
+          <button type="button" class="parent-mount-btn" data-mount="coreGui" title="game:GetService(&quot;CoreGui&quot;)">CoreGui</button>
+          <button type="button" class="parent-mount-btn" data-mount="none" title="No Parent line — set it yourself in Studio">None</button>
+        </div>
+      </div>
+      <div id="previewWrap">
+        <div id="previewSurface" role="application" aria-label="UI preview canvas">
+          <div class="preview-resize-grip" id="previewResizeGrip"></div>
+          <div class="preview-size-label" id="previewSizeLabel"></div>
+        </div>
+      </div>
+    </article>
+    <div class="col-resizer res-props" data-resize-right="propsColumn"></div>
+
+    <aside class="pane props-col" id="propsColumn">
+      <div class="pane-head">
+        <h2>Properties</h2>
+      </div>
+      <div class="props-panel-inner">
+        <p id="propsEmpty" style="margin:0;font-size:12px;color:var(--muted);">To get started click an element on the visual editor or click a button in the insert section.</p>
+        <div id="propsForm" style="display: none;">
+          <div class="prop-readout-wrap">
+            <div class="prop-class" id="propsClassReadout"></div>
+            <div class="prop-hierarchy" id="propsHierarchyReadout"></div>
+          </div>
+          <p id="propsMixedNotice" style="display:none;margin:0 0 10px;font-size:12px;color:var(--muted);">Multiple types selected — select instances of the same class to edit properties together, or use one at a time.</p>
+          <div class="prop-grid" id="propsEditorFields">
+            <label for="propsName">Name</label>
+            <input type="text" id="propsName" class="full" autocomplete="off" />
+            <div id="propsScreenGuiFields" class="decor-section">
+              <span style="grid-column: 1 / -1; font-size: 10px; color: var(--muted)">ScreenGui</span>
+              <label class="inline toggle-chip"><input type="checkbox" id="propsIgnoreGuiInset" /><span class="toggle-chip__text">IgnoreGuiInset</span></label>
+              <label class="inline toggle-chip"><input type="checkbox" id="propsResetOnSpawn" /><span class="toggle-chip__text">ResetOnSpawn</span></label>
+              <label for="propsSgZ">DisplayOrder</label>
+              <input type="number" id="propsSgZ" class="full" min="0" max="2147483647" step="1" title="ScreenGui stacking order (Roblox has no ZIndex on ScreenGui)" />
+            </div>
+            <div id="propsLayoutBlock">
+              <label>Position (scale 0–1)</label>
+              <input type="number" id="propsPosX" step="any" min="0" max="1" title="X scale" />
+              <input type="number" id="propsPosY" step="any" min="0" max="1" title="Y scale" />
+              <label>Size (scale 0–1)</label>
+              <input type="number" id="propsSizeX" step="any" min="0.02" max="1" title="X scale" />
+              <input type="number" id="propsSizeY" step="any" min="0.02" max="1" title="Y scale" />
+              <label>AnchorPoint</label>
+              <input type="number" id="propsAx" step="any" min="0" max="1" title="X" />
+              <input type="number" id="propsAy" step="any" min="0" max="1" title="Y" />
+              <label for="propsZIndex">ZIndex</label>
+              <input type="number" id="propsZIndex" class="full" min="-32768" max="32767" step="1" title="Higher draws above siblings (Roblox −32768…32767)" />
+              <div id="propsDraggableRow" class="props-draggable-export" style="display: none; grid-column: 1 / -1">
+                <span class="props-draggable-label">Exported Luau only</span>
+                <div class="props-draggable-actions">
+                  <button type="button" class="btn btn--primary" id="propsMakeDraggableBtn" title="Adds UserInputService + InputBegan drag script to the downloaded Luau">
+                    Make draggable
+                  </button>
+                  <button type="button" class="btn btn--ghost" id="propsClearDraggableBtn" title="Remove generated drag script from export">
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <label>Background RGB</label>
+              <input type="number" id="propsBgR" min="0" max="255" />
+              <input type="number" id="propsBgG" min="0" max="255" />
+              <input type="number" id="propsBgB" min="0" max="255" />
+              <div id="propsBgColorPicker" class="color-picker-block" aria-label="Background color">
+                <div
+                  id="propsBgHueStrip"
+                  class="color-picker-hue"
+                  title="Hue"
+                  role="slider"
+                  aria-valuemin="0"
+                  aria-valuemax="360"
+                  tabindex="0"
+                >
+                  <div id="propsBgHueThumb" class="color-picker-hue-thumb" aria-hidden="true"></div>
+                </div>
+                <div id="propsBgSvPad" class="color-picker-sv" title="Saturation and value">
+                  <div class="color-picker-sv-layers" id="propsBgSvLayers"></div>
+                  <div id="propsBgSvDot" class="color-picker-dot" aria-hidden="true"></div>
+                </div>
+              </div>
+              <label for="propsBgTrans">BackgroundTransparency</label>
+              <input type="number" id="propsBgTrans" class="full" step="any" min="0" max="1" inputmode="decimal" lang="en" title="0–1 (decimals OK)" />
+              <label for="propsBorder">BorderSizePixel</label>
+              <input type="number" id="propsBorder" class="full" min="0" max="20" step="1" />
+              <label for="propsElemCorner">Corner radius (px)</label>
+              <input
+                type="number"
+                id="propsElemCorner"
+                class="full"
+                min="0"
+                max="64"
+                step="any"
+                title="Preview + export: auto UICorner on this element (0 = square). Decimals OK. Ignored if you add a UICorner child."
+              />
+            </div>
+            <div id="propsUICornerFields" class="decor-section">
+              <label for="propsCornerRadius">CornerRadius (px offset)</label>
+              <input type="number" id="propsCornerRadius" class="full" min="0" max="64" step="any" title="Pixel offset (decimals OK)" />
+            </div>
+            <div id="propsUIStrokeFields" class="decor-section">
+              <label for="propsStrokeThickness">Thickness</label>
+              <input type="number" id="propsStrokeThickness" class="full" min="0" max="24" step="1" />
+              <label>Stroke Color RGB</label>
+              <input type="number" id="propsStrokeR" min="0" max="255" />
+              <input type="number" id="propsStrokeG" min="0" max="255" />
+              <input type="number" id="propsStrokeB" min="0" max="255" />
+              <label for="propsStrokeTrans">Transparency</label>
+              <input type="number" id="propsStrokeTrans" class="full" step="any" min="0" max="1" inputmode="decimal" lang="en" title="0–1 (decimals OK)" />
+            </div>
+            <div id="propsUIGradientFields" class="decor-section">
+              <label for="propsGradRotation">Rotation (deg)</label>
+              <input type="number" id="propsGradRotation" class="full" min="-180" max="180" step="1" />
+              <label>Gradient start Color3 RGB</label>
+              <input type="number" id="propsGradC0R" min="0" max="255" title="Start R" />
+              <input type="number" id="propsGradC0G" min="0" max="255" title="Start G" />
+              <input type="number" id="propsGradC0B" min="0" max="255" title="Start B" />
+              <label>Gradient end Color3 RGB</label>
+              <input type="number" id="propsGradC1R" min="0" max="255" title="End R" />
+              <input type="number" id="propsGradC1G" min="0" max="255" title="End G" />
+              <input type="number" id="propsGradC1B" min="0" max="255" title="End B" />
+            </div>
+            <div id="propsUIPaddingFields" class="decor-section">
+              <span style="grid-column:1/-1;font-size:10px;color:var(--muted);">UIPadding (pixel offset each side)</span>
+              <label for="propsPadTop">PaddingTop</label>
+              <input type="number" id="propsPadTop" class="full" min="0" max="200" step="1" />
+              <label for="propsPadBottom">PaddingBottom</label>
+              <input type="number" id="propsPadBottom" class="full" min="0" max="200" step="1" />
+              <label for="propsPadLeft">PaddingLeft</label>
+              <input type="number" id="propsPadLeft" class="full" min="0" max="200" step="1" />
+              <label for="propsPadRight">PaddingRight</label>
+              <input type="number" id="propsPadRight" class="full" min="0" max="200" step="1" />
+            </div>
+            <div id="propsTextBlock">
+              <label for="propsText">Text</label>
+              <input type="text" id="propsText" class="full" autocomplete="off" />
+              <label>TextColor3 RGB</label>
+              <input type="number" id="propsTxR" min="0" max="255" />
+              <input type="number" id="propsTxG" min="0" max="255" />
+              <input type="number" id="propsTxB" min="0" max="255" />
+              <label for="propsTextSize">TextSize</label>
+              <input type="number" id="propsTextSize" class="full" min="8" max="72" step="1" />
+              <label class="inline toggle-chip"><input type="checkbox" id="propsTextScaled" /><span class="toggle-chip__text">TextScaled</span></label>
+              <label class="inline toggle-chip"><input type="checkbox" id="propsTextWrapped" /><span class="toggle-chip__text">TextWrapped</span></label>
+              <label for="propsTextXAlignment">TextXAlignment</label>
+              <select id="propsTextXAlignment" class="full" title="Horizontal text alignment">
+                <option value="Left">Left</option>
+                <option value="Center" selected>Center</option>
+                <option value="Right">Right</option>
+              </select>
+              <label for="propsTextYAlignment">TextYAlignment</label>
+              <select id="propsTextYAlignment" class="full" title="Vertical text alignment">
+                <option value="Top">Top</option>
+                <option value="Center" selected>Center</option>
+                <option value="Bottom">Bottom</option>
+              </select>
+            </div>
+            <div id="propsImageRow">
+              <label for="propsImage">Image (rbxassetid or URL)</label>
+              <input type="text" id="propsImage" class="full" autocomplete="off" />
+            </div>
+          </div>
+          <div class="props-footer-actions">
+            <button type="button" class="btn btn--primary" id="propsApply">Apply</button>
+            <button type="button" class="btn" id="propsDelete">Delete</button>
+            <label class="toggle-chip toggle-chip--live"><input type="checkbox" id="propsLiveApply" checked /><span class="toggle-chip__text">Live update</span></label>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <nav class="mobile-tab-bar" id="mobileTabBar" aria-label="Workspace panels" hidden>
+    <button type="button" class="mobile-tab-btn" data-mobile-pane="insert" aria-current="false">Insert</button>
+    <button type="button" class="mobile-tab-btn" data-mobile-pane="source" aria-current="false">Source</button>
+    <button type="button" class="mobile-tab-btn" data-mobile-pane="preview" aria-current="true">Preview</button>
+    <button type="button" class="mobile-tab-btn" data-mobile-pane="props" aria-current="false">Props</button>
+  </nav>
+
+  <footer class="statusbar" id="statusBar" aria-live="polite" aria-label="Status">
+    <span id="statusText" class="status-text"></span>
+  </footer>
+
+  <script src="./translate.js?v=25"></script>
+</body>
+</html>
