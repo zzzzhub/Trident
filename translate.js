@@ -1,6 +1,9 @@
 const DECORATOR_CLASSES = new Set([ "UICorner", "UIStroke", "UIGradient" ]);
-const LAYOUT_CLASSES = new Set([ "UIListLayout", "UIGridLayout", "UIPageLayout", "UITableLayout", "UIPadding", "UIAspectRatioConstraint", "UISizeConstraint", "UITextSizeConstraint" ]);
-const ROOT_GUI_CLASSES = new Set([ "ScreenGui", "BillboardGui", "SurfaceGui", "LayerCollector", "GuiMain" ]);
+const LAYOUT_CLASSES = new Set([ "UIListLayout", "UIGridLayout", "UIPageLayout", "UITableLayout", "UIPadding", "UIAspectRatioConstraint", "UISizeConstraint", "UITextSizeConstraint", "UIScale", "UIFlexItem" ]);
+const ROOT_GUI_CLASSES = new Set([ "ScreenGui" ]);
+const GUI_OBJECT_CLASSES = new Set([ "Frame", "ScrollingFrame", "VideoFrame", "ViewportFrame", "CanvasGroup", "TextLabel", "TextButton", "TextBox", "ImageLabel", "ImageButton" ]);
+const IGNORED_WORLDSPACE_UI_CLASSES = new Set([ "BillboardGui", "SurfaceGui", "LayerCollector", "GuiMain", "PluginGui", "DockWidgetPluginGui", "Highlight" ]);
+const UI_CLASS_HINTS = [ "Gui", "Frame", "Label", "Button", "TextBox", "ScrollingFrame", "CanvasGroup", "ViewportFrame", "Image", "VideoFrame", "UI" ];
 
 let liveModel = {
     nodes: new Map,
@@ -44,6 +47,7 @@ const PROPS_LAYOUT_FIELD_IDS = new Set([ "propsSizeX", "propsSizeY", "propsPosX"
 let suppressLayoutUnlockFromPropsRefresh = false;
 let propsLayoutPanelSyncRaf = 0;
 let pendingPropsLayoutNodeId = null;
+let liveRenderDebounce = null;
 const SNAP_GUIDE_PX = 6;
 const expandedExplorerIds = new Set;
 const CHROME_Z = "2147483000";
@@ -378,30 +382,167 @@ function splitStatements(s) {
     return statements;
 }
 
+function parseLuauRef(raw) {
+    const s = String(raw || "").trim();
+    if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(s)) return s;
+    return null;
+}
+
+function parseValueFromExpression(raw) {
+    const s = String(raw || "").trim();
+    let m = s.match(/(UDim2\.(?:fromScale|fromOffset|new)\(\s*[^)]*\))/);
+    if (m) return parseValue(m[1]);
+    m = s.match(/(UDim\.new\(\s*[^)]*\))/);
+    if (m) return parseValue(m[1]);
+    m = s.match(/(Vector2\.new\(\s*[^)]*\))/);
+    if (m) return parseValue(m[1]);
+    m = s.match(/(Color3\.(?:fromRGB|fromHex)\(\s*[^)]*\))/);
+    if (m) return parseValue(m[1]);
+    m = s.match(/(Enum\.[A-Za-z_]\w*\.[A-Za-z_]\w*)/);
+    if (m) return parseValue(m[1]);
+    return {
+        type: "raw",
+        value: raw
+    };
+}
+
+function sanitizeVarNameFromRef(ref, fallback = "node") {
+    let s = String(ref || fallback).replace(/[^A-Za-z0-9_]/g, "_");
+    s = s.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    if (!s) s = fallback;
+    if (!/^[A-Za-z_]/.test(s)) s = `_${s}`;
+    return s;
+}
+
+function isLikelyUiClass(className) {
+    if (!className) return false;
+    if (IGNORED_WORLDSPACE_UI_CLASSES.has(className)) return false;
+    if (DECORATOR_CLASSES.has(className) || LAYOUT_CLASSES.has(className) || ROOT_GUI_CLASSES.has(className)) return true;
+    if (GUI_OBJECT_CLASSES.has(className)) return true;
+    return UI_CLASS_HINTS.some(h => className.includes(h));
+}
+
+function filterToUiNodes(model, parentById) {
+    const keep = new Set;
+    for (const [id, node] of model.nodes) {
+        if (isLikelyUiClass(node.className)) keep.add(id);
+    }
+    if (!keep.size) {
+        return {
+            nodes: new Map,
+            roots: [],
+            order: []
+        };
+    }
+    const childrenById = new Map;
+    for (const [childId, parentId] of parentById) {
+        if (!keep.has(childId) || !keep.has(parentId)) continue;
+        if (!childrenById.has(parentId)) childrenById.set(parentId, []);
+        childrenById.get(parentId).push(childId);
+    }
+    const rootedKeep = new Set;
+    const explicitRoots = [];
+    for (const id of model.order) {
+        if (!keep.has(id)) continue;
+        const node = model.nodes.get(id);
+        if (node && ROOT_GUI_CLASSES.has(node.className)) explicitRoots.push(id);
+    }
+    if (explicitRoots.length) {
+        const stack = [ ...explicitRoots ];
+        while (stack.length) {
+            const id = stack.pop();
+            if (rootedKeep.has(id)) continue;
+            rootedKeep.add(id);
+            const kids = childrenById.get(id) || [];
+            for (const cid of kids) stack.push(cid);
+        }
+        for (const id of keep) {
+            if (!rootedKeep.has(id)) rootedKeep.add(id);
+        }
+    } else {
+        for (const id of keep) rootedKeep.add(id);
+    }
+    const nodes = new Map;
+    const order = [];
+    for (const id of model.order) {
+        if (!rootedKeep.has(id)) continue;
+        const src = model.nodes.get(id);
+        if (!src) continue;
+        nodes.set(id, {
+            id: src.id,
+            varName: src.varName,
+            className: src.className,
+            props: { ...src.props },
+            children: []
+        });
+        order.push(id);
+    }
+    const roots = [];
+    for (const id of order) {
+        const parentId = parentById.get(id);
+        if (parentId && rootedKeep.has(parentId) && nodes.has(parentId)) {
+            nodes.get(parentId).children.push(id);
+        } else {
+            roots.push(id);
+        }
+    }
+    return {
+        nodes,
+        roots,
+        order
+    };
+}
+
 function parseLuau(source) {
     const nodes = new Map;
-    const roots = [];
     const parentById = new Map;
-    const childrenById = new Map;
     const order = [];
+    const knownValues = new Map;
+    const latestVarBinding = new Map;
+    const refAliases = new Map;
+    let localRebindCounter = 0;
+    const resolveNodeRef = ref => {
+        let s = parseLuauRef(ref);
+        if (!s) return null;
+        const seen = new Set;
+        for (let hop = 0; hop < 20; hop++) {
+            if (!s || seen.has(s)) break;
+            seen.add(s);
+            if (/^[A-Za-z_]\w*$/.test(s) && latestVarBinding.has(s)) {
+                s = latestVarBinding.get(s);
+                break;
+            }
+            if (refAliases.has(s)) {
+                s = refAliases.get(s);
+                continue;
+            }
+            break;
+        }
+        return s;
+    };
     if (!String(source || "").trim()) {
         return {
             nodes: nodes,
-            roots: roots,
+            roots: [],
             order: order
         };
     }
     const normalized = normalizeSource(source);
     const statements = splitStatements(normalized);
+    let anonCounter = 0;
     for (const stmt of statements) {
-        const oneLine = stmt.replace(/\s+/g, " ").trim();
-        let m = stmt.match(/^local\s+([A-Za-z_]\w*)\s*=\s*Instance\.new\(["']([A-Za-z_]\w*)["']\)\s*$/);
+        let m = stmt.match(/^local\s+([A-Za-z_]\w*)\s*=\s*Instance\.new\(\s*["']([A-Za-z_]\w*)["'](?:\s*,\s*([^)]+?))?\s*\)\s*$/);
         if (m) {
-            const [, id, className] = m;
+            const [, declaredId, className, parentRaw] = m;
+            let id = declaredId;
+            if (nodes.has(id)) {
+                localRebindCounter++;
+                id = `${declaredId}__${localRebindCounter}`;
+            }
             if (!nodes.has(id)) {
                 nodes.set(id, {
                     id: id,
-                    varName: id,
+                    varName: sanitizeVarNameFromRef(id, declaredId),
                     className: className,
                     props: {},
                     children: []
@@ -410,41 +551,120 @@ function parseLuau(source) {
             } else {
                 nodes.get(id).className = className;
             }
+            latestVarBinding.set(declaredId, id);
+            const parentId = resolveNodeRef(parentRaw);
+            if (parentId) parentById.set(id, parentId);
             continue;
         }
-        m = stmt.match(/^([A-Za-z_]\w*)\.Parent\s*=\s*([A-Za-z_]\w*)\s*$/);
+        m = stmt.match(/^local\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/);
         if (m) {
-            const [, childId, parentId] = m;
+            const [, lhs, rhsRaw] = m;
+            const rhs = resolveNodeRef(rhsRaw) || parseLuauRef(rhsRaw);
+            if (rhs) refAliases.set(lhs, rhs);
+            continue;
+        }
+        m = stmt.match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*=\s*Instance\.new\(\s*["']([A-Za-z_]\w*)["'](?:\s*,\s*([^)]+?))?\s*\)\s*$/);
+        if (m) {
+            const [, id, className, parentRaw] = m;
+            if (!nodes.has(id)) {
+                nodes.set(id, {
+                    id: id,
+                    varName: sanitizeVarNameFromRef(id, className.toLowerCase()),
+                    className: className,
+                    props: {},
+                    children: []
+                });
+                order.push(id);
+            } else {
+                nodes.get(id).className = className;
+            }
+            if (/^[A-Za-z_]\w*$/.test(id)) latestVarBinding.set(id, id);
+            const parentId = resolveNodeRef(parentRaw);
+            if (parentId) parentById.set(id, parentId);
+            continue;
+        }
+        m = stmt.match(/^Instance\.new\(\s*["']([A-Za-z_]\w*)["'](?:\s*,\s*([^)]+?))?\s*\)\.([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/);
+        if (m) {
+            const [, className, parentRaw, prop, rawRhs] = m;
+            anonCounter++;
+            const id = `__anon_${anonCounter}_${className}`;
+            nodes.set(id, {
+                id: id,
+                varName: sanitizeVarNameFromRef(id, className.toLowerCase()),
+                className: className,
+                props: {
+                    [prop]: parseValue(rawRhs.trim())
+                },
+                children: []
+            });
+            order.push(id);
+            const parentId = resolveNodeRef(parentRaw);
+            if (parentId) parentById.set(id, parentId);
+            continue;
+        }
+        m = stmt.match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.Parent\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/);
+        if (m) {
+            const [, childRaw, parentRaw] = m;
+            const childId = resolveNodeRef(childRaw);
+            const parentId = resolveNodeRef(parentRaw);
+            if (!childId || !parentId) continue;
             parentById.set(childId, parentId);
-            if (!childrenById.has(parentId)) childrenById.set(parentId, []);
-            if (!childrenById.get(parentId).includes(childId)) childrenById.get(parentId).push(childId);
             continue;
         }
-        m = stmt.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/);
+        m = stmt.match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*=\s*([\s\S]+)$/);
         if (m) {
-            const [, id, prop, rawRhs] = m;
+            const [, ref, rawRhs] = m;
+            if (!ref.endsWith(".Parent")) {
+                const parsed = parseValue(rawRhs.trim());
+                const resolvedRef = resolveNodeRef(ref) || ref;
+                const rhsRef = resolveNodeRef(rawRhs.trim()) || parseLuauRef(rawRhs.trim());
+                if (rhsRef) refAliases.set(ref, rhsRef);
+                if (parsed?.type !== "raw") {
+                    knownValues.set(resolvedRef, parsed);
+                } else {
+                    const exprParsed = parseValueFromExpression(rawRhs.trim());
+                    if (exprParsed?.type !== "raw") knownValues.set(resolvedRef, exprParsed);
+                }
+            }
+        }
+        m = stmt.match(/^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/);
+        if (m) {
+            const [, rawId, prop, rawRhs] = m;
+            const id = resolveNodeRef(rawId);
+            if (!id) continue;
             if (!nodes.has(id)) continue;
-            nodes.get(id).props[prop] = parseValue(rawRhs.trim());
+            const rhs = rawRhs.trim();
+            const ref = resolveNodeRef(rhs);
+            if (ref && knownValues.has(ref)) {
+                nodes.get(id).props[prop] = knownValues.get(ref);
+            } else {
+                const parsed = parseValue(rhs);
+                if (parsed?.type !== "raw") {
+                    nodes.get(id).props[prop] = parsed;
+                } else {
+                    nodes.get(id).props[prop] = parseValueFromExpression(rhs);
+                }
+            }
             continue;
         }
     }
-    for (const [id, node] of nodes) {
-        node.children = childrenById.has(id) ? [ ...childrenById.get(id) ] : [];
-        if (!parentById.has(id)) roots.push(id);
-    }
-    for (const [, node] of nodes) {
+    const filtered = filterToUiNodes({
+        nodes,
+        order
+    }, parentById);
+    for (const [, node] of filtered.nodes) {
         if (node.className === "ScreenGui") migrateScreenGuiNodeProps(node.props);
     }
     const dragPragmas = extractTridentInputDragPragmas(source);
     for (const [vn] of dragPragmas) {
-        if (nodes.has(vn)) {
-            nodes.get(vn).props.TridentInputDrag = true;
+        if (filtered.nodes.has(vn)) {
+            filtered.nodes.get(vn).props.TridentInputDrag = true;
         }
     }
     return {
-        nodes: nodes,
-        roots: roots,
-        order: order
+        nodes: filtered.nodes,
+        roots: filtered.roots,
+        order: filtered.order
     };
 }
 
@@ -605,6 +825,26 @@ function normalizeGuiZIndex(props) {
     return 1;
 }
 
+function isGlobalZIndexBehavior(props) {
+    const z = props?.ZIndexBehavior;
+    return z && z.type === "enumPath" && /ZIndexBehavior\.Global$/.test(z.path || "");
+}
+
+function resolveEffectiveZIndex(className, props, parentEl) {
+    if (className === "ScreenGui") {
+        const legacyZ = typeof props.ZIndex === "number" && Number.isFinite(props.ZIndex) ? props.ZIndex : null;
+        const d = typeof props.DisplayOrder === "number" && Number.isFinite(props.DisplayOrder) ? props.DisplayOrder : legacyZ != null ? legacyZ : 1;
+        return Math.max(0, Math.min(2147483647, Math.round(d)));
+    }
+    const own = normalizeGuiZIndex(props);
+    const parentEffective = Number(parentEl?.dataset?.effectiveZ || 0);
+    const globalMode = parentEl?.dataset?.zglobal === "1";
+    if (globalMode) {
+        return Math.max(-32768, Math.min(32767, Math.round(parentEffective + own)));
+    }
+    return own;
+}
+
 /** updated this to avoid using zindex on screengui since luau syntax doesnt work like that! */
 function migrateScreenGuiNodeProps(props) {
     if (!props || typeof props !== "object") return;
@@ -665,15 +905,67 @@ function createElementForClass(className) {
     }
 }
 
+function fallbackGuiSizePx(className, parentW, parentH) {
+    const pw = Math.max(320, Number(parentW) || 800);
+    const ph = Math.max(220, Number(parentH) || 600);
+    if ([ "Frame", "ScrollingFrame", "CanvasGroup" ].includes(className)) {
+        return {
+            w: Math.min(620, Math.round(pw * .72)),
+            h: Math.min(420, Math.round(ph * .62))
+        };
+    }
+    if ([ "TextLabel", "TextButton", "TextBox", "ImageLabel", "ImageButton", "VideoFrame", "ViewportFrame" ].includes(className)) {
+        return {
+            w: Math.min(300, Math.round(pw * .42)),
+            h: Math.min(72, Math.round(ph * .12))
+        };
+    }
+    return {
+        w: 180,
+        h: 60
+    };
+}
+
+function mapRobloxFontFamily(fontPath) {
+    const p = String(fontPath || "");
+    if (p.includes("Code")) return "\"JetBrains Mono\", ui-monospace, monospace";
+    if (p.includes("Arcade")) return "\"Press Start 2P\", \"JetBrains Mono\", monospace";
+    if (p.includes("Bodoni") || p.includes("Garamond") || p.includes("Antique") || p.includes("Cartoon")) return "\"Times New Roman\", serif";
+    if (p.includes("Highway") || p.includes("SciFi")) return "\"Trebuchet MS\", \"Segoe UI\", sans-serif";
+    if (p.includes("SourceSans")) return "\"Source Sans 3\", \"Segoe UI\", sans-serif";
+    if (p.includes("Arial")) return "Arial, \"Segoe UI\", sans-serif";
+    return "Gotham, Inter, \"Segoe UI\", sans-serif";
+}
+
+function mapRobloxFontWeight(fontPath) {
+    const p = String(fontPath || "");
+    if (/(Black|Heavy)/.test(p)) return "800";
+    if (/(Bold|Semibold)/.test(p)) return "700";
+    if (/(Medium)/.test(p)) return "600";
+    if (/(Light)/.test(p)) return "300";
+    return "500";
+}
+
+function estimateScaledTextPx(text, wPx, hPx) {
+    const t = String(text || "");
+    const lines = Math.max(1, t.split("\n").length);
+    const longest = Math.max(1, ...t.split("\n").map(x => x.length || 1));
+    const byHeight = Math.max(9, (hPx - 8) / lines * .82);
+    const byWidth = Math.max(9, (wPx - 12) / (longest * .58));
+    return Math.max(9, Math.min(96, Math.floor(Math.min(byHeight, byWidth))));
+}
+
 function applyGuiObjectStyles(el, props, parentEl, fillParent) {
     const { w: pw, h: ph } = getParentUdimBasisPx(parentEl);
     el.style.position = "absolute";
     el.style.boxSizing = "border-box";
     el.style.transform = "none";
+    const cn = el.dataset.className;
     const ax = props.AnchorPoint && props.AnchorPoint.type === "vector2" ? props.AnchorPoint.x : 0;
     const ay = props.AnchorPoint && props.AnchorPoint.type === "vector2" ? props.AnchorPoint.y : 0;
-    let wPx = 120;
-    let hPx = 40;
+    const fallbackSize = fallbackGuiSizePx(cn, pw, ph);
+    let wPx = fallbackSize.w;
+    let hPx = fallbackSize.h;
     const size = props.Size;
     if (size && size.type === "udim2") {
         wPx = udim2AxisPixels(size.xScale, size.xOffset, pw);
@@ -701,13 +993,13 @@ function applyGuiObjectStyles(el, props, parentEl, fillParent) {
         el.style.left = "0px";
         el.style.top = "0px";
     }
-    const cn = el.dataset.className;
+    const effectiveZ = resolveEffectiveZIndex(cn, props, parentEl);
+    el.style.zIndex = String(effectiveZ);
+    el.dataset.effectiveZ = String(effectiveZ);
     if (cn === "ScreenGui") {
-        const legacyZ = typeof props.ZIndex === "number" && Number.isFinite(props.ZIndex) ? props.ZIndex : null;
-        const d = typeof props.DisplayOrder === "number" && Number.isFinite(props.DisplayOrder) ? props.DisplayOrder : legacyZ != null ? legacyZ : 1;
-        el.style.zIndex = String(Math.max(0, Math.min(2147483647, Math.round(d))));
+        el.dataset.zglobal = isGlobalZIndexBehavior(props) ? "1" : "0";
     } else {
-        el.style.zIndex = String(normalizeGuiZIndex(props));
+        el.dataset.zglobal = parentEl?.dataset?.zglobal === "1" ? "1" : "0";
     }
     const isText = el.tagName === "BUTTON" || el.tagName === "TEXTAREA" || [ "TextLabel", "TextButton", "TextBox" ].includes(el.dataset.className);
     const textGui = [ "TextLabel", "TextButton", "TextBox" ].includes(cn);
@@ -715,27 +1007,15 @@ function applyGuiObjectStyles(el, props, parentEl, fillParent) {
     const bt = typeof props.BackgroundTransparency === "number" ? Math.min(1, Math.max(0, props.BackgroundTransparency)) : 0;
     if (props.BackgroundColor3 && props.BackgroundColor3.type === "color3") {
         const c = props.BackgroundColor3;
-        if (textGui || imageGui) {
-            el.style.backgroundColor = `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.max(0, 1 - bt)})`;
-        } else {
-            el.style.backgroundColor = color3ToCss(props.BackgroundColor3);
-        }
+        el.style.backgroundColor = `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.max(0, 1 - bt)})`;
     } else if (!isText || cn === "Frame" || cn === "ScrollingFrame") {
         if (bt >= 1) {
             el.style.backgroundColor = "transparent";
         } else {
-            el.style.backgroundColor = "rgba(30,34,44,0.85)";
+            el.style.backgroundColor = `rgba(30,34,44,${Math.max(0, Math.min(1, .85 * (1 - bt)))})`;
         }
     }
-    if (typeof props.BackgroundTransparency === "number") {
-        if (textGui || imageGui) {
-            el.style.opacity = "1";
-        } else {
-            el.style.opacity = String(Math.max(.05, 1 - bt));
-        }
-    } else {
-        el.style.opacity = "";
-    }
+    el.style.opacity = "1";
     if (typeof props.BorderSizePixel === "number" && props.BorderSizePixel > 0) {
         el.style.border = `${props.BorderSizePixel}px solid rgba(255,255,255,0.15)`;
     } else {
@@ -751,19 +1031,20 @@ function applyGuiObjectStyles(el, props, parentEl, fillParent) {
         if (el.tagName === "TEXTAREA") {
             el.style.display = "block";
             el.style.padding = "6px";
-            el.style.fontWeight = "600";
-            el.style.fontFamily = "Gotham, Inter, sans-serif";
+            el.style.fontWeight = mapRobloxFontWeight(props.Font?.path || "");
+            el.style.fontFamily = mapRobloxFontFamily(props.Font?.path || "");
         } else {
             el.style.display = "flex";
             el.style.alignItems = mapTextYAlign(ty);
             el.style.justifyContent = mapTextXAlign(tx);
             el.style.textAlign = tx.endsWith("Left") ? "left" : tx.endsWith("Right") ? "right" : "center";
             el.style.padding = "6px";
-            el.style.fontWeight = "600";
-            el.style.fontFamily = "Gotham, Inter, sans-serif";
+            el.style.fontWeight = mapRobloxFontWeight(props.Font?.path || "");
+            el.style.fontFamily = mapRobloxFontFamily(props.Font?.path || "");
             el.style.overflow = "hidden";
             el.style.minWidth = "0";
             el.style.minHeight = "0";
+            el.style.lineHeight = "1.05";
         }
     }
     if (props.TextColor3 && props.TextColor3.type === "color3") {
@@ -773,8 +1054,9 @@ function applyGuiObjectStyles(el, props, parentEl, fillParent) {
         el.style.fontSize = `${props.TextSize}px`;
         el.style.containerType = "";
     } else if (props.TextScaled === true) {
-        const m = Math.max(1, Math.min(wPx, hPx));
-        el.style.fontSize = `clamp(11px, ${0.022 * m}px, 22px)`;
+        const textValue = typeof props.Text === "string" ? props.Text : el.textContent || "";
+        const px = estimateScaledTextPx(textValue, wPx, hPx);
+        el.style.fontSize = `${px}px`;
         el.style.containerType = "";
     } else {
         el.style.fontSize = "14px";
@@ -783,6 +1065,10 @@ function applyGuiObjectStyles(el, props, parentEl, fillParent) {
     if (props.TextWrapped === true && el.tagName !== "TEXTAREA") {
         el.style.whiteSpace = "normal";
         el.style.wordBreak = "break-word";
+    } else if (textGui && el.tagName !== "TEXTAREA") {
+        el.style.whiteSpace = "nowrap";
+        el.style.wordBreak = "normal";
+        el.style.textOverflow = "ellipsis";
     }
     if (cn === "ScrollingFrame") {
         el.style.overflow = "auto";
@@ -2062,13 +2348,12 @@ function renderFromLiveModel() {
         const wrap = document.createElement("div");
         wrap.className = "trident-root-wrap";
         wrap.dataset.rootIndex = String(i);
-        wrap.style.top = nR > 1 ? `${100 / nR * i}%` : "0";
-        wrap.style.height = nR > 1 ? `${100 / nR}%` : "100%";
-        if (nR > 1 && i < nR - 1) wrap.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
+        wrap.style.top = "0";
+        wrap.style.height = "100%";
         const surfW = previewSurface.clientWidth || 800;
         const surfH = previewSurface.clientHeight || 600;
         wrap._tridentComputedW = surfW;
-        wrap._tridentComputedH = nR > 1 ? surfH / nR : surfH;
+        wrap._tridentComputedH = surfH;
         const html = buildHtmlTree(rid, liveModel.nodes, wrap, true);
         if (html) wrap.appendChild(html);
         previewSurface.appendChild(wrap);
@@ -3364,6 +3649,14 @@ function render() {
     schedulePersistEditorState();
 }
 
+function scheduleAutoRenderFromSource(delayMs = 120) {
+    clearTimeout(liveRenderDebounce);
+    liveRenderDebounce = setTimeout(() => {
+        liveRenderDebounce = null;
+        render();
+    }, delayMs);
+}
+
 function downloadLuau() {
     try {
         const text = exportToLuau(liveModel, getExportOpts());
@@ -3420,6 +3713,11 @@ document.getElementById("loadProjectFile")?.addEventListener("change", e => {
 });
 
 propsLiveApply?.addEventListener("change", () => schedulePersistEditorState());
+
+if (input) {
+    input.addEventListener("input", () => scheduleAutoRenderFromSource(140));
+    input.addEventListener("paste", () => scheduleAutoRenderFromSource(40));
+}
 
 if (downloadBtn) downloadBtn.addEventListener("click", downloadLuau);
 
