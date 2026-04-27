@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/github/last-commit/zzzzhub/Trident?style=for-the-badge&logo=github&color=yellow" alt="Last Commit">
   </a>
   <br>
-  <img src="https://img.shields.io/badge/Trident-v0.1.0-yellow?style=for-the-badge&logo=windows" alt="v0.1.0">
+  <img src="https://img.shields.io/badge/Trident-v0.1.1-yellow?style=for-the-badge&logo=windows" alt="v0.1.1">
 </p>
 
 <h1 align="center">Trident</h1>
